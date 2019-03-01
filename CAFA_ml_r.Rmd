@@ -1,0 +1,367 @@
+---
+title: "Diplomado Data-Science"
+subtitle: "Módulo: Machine Learning with R"
+author: "Cristian Armando, Flores Álvarez &  Luis Giovanni Guerrero García"
+date: "Febrero 2019"
+output: html_notebook
+---
+![](images/ITAM.png)  ![](images/citibanamex-logo.png)
+
+# Kaggle Competition: House Prices
+![](./images/housesbanner.png)
+
+### Competition Description
+
+Ask a home buyer to describe their dream house, and they probably won't begin with the height of the basement ceiling or the proximity to an east-west railroad. But this playground competition's dataset proves that much more influences price negotiations than the number of bedrooms or a white-picket fence.
+
+With 79 explanatory variables describing (almost) every aspect of residential homes in Ames, Iowa, this competition challenges you to predict the final price of each home.
+
+### File descriptions
+* train.csv - the training set
+* test.csv - the test set
+* data_description.txt - full description of each column, originally prepared by Dean De Cock but lightly edited to match the column names used here.
+
+* sample_submission.csv - a benchmark submission from a linear regression on year and month of sale, lot square footage, and number of bedrooms.
+
+### Descripción de Variables
+
+```{r}
+library(readxl)
+library(knitr)
+library(kableExtra)
+library(tidyr)
+library(ggplot2)
+library(RColorBrewer)
+library(dplyr)
+schema<-read.csv("./datasets/schema.csv")
+train<-read.csv("./datasets/train.csv")
+Unique_values<-function(Data,n=3){
+   valores=NULL
+  unicos=sapply((Data), unique)
+  for(i in unicos){
+    m=ifelse(length(i)<n,length(i),n)
+    valores=c(valores,paste0(i[1:m],collapse = ", "))
+  }
+  return(data.frame(Variable=names(Data),Tipo=sapply(Data, class),Posibles_valores=valores))
+}
+unicos=Unique_values(train)
+summary=merge(x=schema,y=unicos)
+
+summary%>%
+kable() %>%
+  kable_styling()%>%scroll_box(width = "100%", height = "500px")
+```
+
+
+### Análisis exploratorio
+
+```{r}
+Train <- read.csv(file = "./datasets/train.csv")
+Test <- read.csv(file = "./datasets/test.csv")
+
+Train$MSSubClass <- as.factor(Train$MSSubClass)
+Train$MoSold <- as.factor(Train$MoSold)
+
+Test$MSSubClass <- as.factor(Test$MSSubClass)
+Test$MoSold <- as.factor(Test$MoSold)
+
+# Número de columnas y registros en la tabla de entrenamiento:
+# 1,460 registros y 81 variables
+dim(Train)
+#dim(Test) 1,459 obs y 80 vars
+
+# Estadísticos de las variables:
+
+# Variable Objetivo:
+
+target <-'SalePrice'
+summary(Train[target])
+
+# Variables Numéricas:
+
+var_num <- c('LotFrontage','LotArea','OverallQual','OverallCond','YearBuilt','YearRemodAdd',
+             'MasVnrArea','BsmtFinSF1','BsmtFinSF2','BsmtUnfSF','TotalBsmtSF','X1stFlrSF',
+             'X2ndFlrSF','LowQualFinSF','GrLivArea','BsmtFullBath','BsmtHalfBath','FullBath',
+             'HalfBath','BedroomAbvGr','KitchenAbvGr','TotRmsAbvGrd','Fireplaces','GarageYrBlt',
+             'GarageCars','GarageArea','WoodDeckSF','OpenPorchSF','EnclosedPorch','X3SsnPorch',
+             'ScreenPorch','PoolArea','MiscVal','YrSold')
+summary(Train[var_num])
+
+#Variables Categóricas:
+
+var_cat <- c('MSSubClass','MSZoning','Street','Alley','LotShape','LandContour','Utilities','LotConfig',
+             'LandSlope','Neighborhood','Condition1','Condition2','BldgType','HouseStyle','RoofStyle',
+             'RoofMatl','Exterior1st','Exterior2nd','MasVnrType','ExterQual','ExterCond','Foundation',
+             'BsmtQual','BsmtCond','BsmtExposure','BsmtFinType1','BsmtFinType2','Heating','HeatingQC',
+             'CentralAir','Electrical','KitchenQual','Functional','FireplaceQu','GarageType',
+             'GarageFinish','GarageQual','GarageCond','PavedDrive','PoolQC','Fence','MiscFeature',
+             'MoSold','SaleType','SaleCondition')
+summary(Train[var_cat])
+```
+
+Comenzamos por contar el número de nulos de cada variable y ver qué proporción de las observaciones totales son valores missing.
+
+```{r}
+
+n_train <- dim(Train)[1]
+missings_train<- as.data.frame(sapply(Train,function(x) sum(is.na(x))))
+colnames(missings_train) <- c("Num_missings")
+missings_train$Percent_miss <- missings_train$Num_missings/n_train
+
+
+n_test <- dim(Test)[1]
+missings_test<- as.data.frame(sapply(Test,function(x) sum(is.na(x))))
+colnames(missings_test) <- c("Num_missings")
+missings_test$Percent_miss <- missings_test$Num_missings/n_test
+
+# Quitamos las variables con % de missings >= 10%
+indx<- which(missings_train$Percent_miss >= 0.1)
+
+#rownames(missings[which(missings$Percent_miss >= 0.1),])
+# Summary de variables con gran cantidad de missings
+summary(Train[,indx])
+
+#Actualizamos la tabla 
+Train <- Train[,-indx]
+y<- length(names(Train))
+Test <- Test[,names(Train)[-y]]
+
+#Dimensiones de la tabla
+dim(Train)
+
+```
+#### Tratamiento de missings:
+
+Imputamos la media a las variables numéricas y la moda a las categóricas:
+
+```{r}
+class_train <- sapply(Train, function(x) class(x))
+missings_train <- missings_train[-indx,]
+missings_train$class_train <- class_train
+
+class_test <- sapply(Test, function(x) class(x))
+missings_test <- missings_test[-indx,]
+missings_test$class_test <- class_test
+
+getmode <- function(v) {
+  levels(v)[which.max(summary(v)[which(names(summary(v)) != "NA's")])]
+}
+
+idx_num <- which(missings_train$Num_missings > 0 & missings_train$class_train == "integer")
+idx_cat <- which(missings_train$Num_missings > 0 & missings_train$class_train == "factor")
+for(k in idx_num){
+  Train[which(is.na(Train[,k])),k] <- mean(Train[,k], na.rm = TRUE) 
+}
+for(k in idx_cat){
+  Train[which(is.na(Train[,k])),k] <- getmode(Train[,k]) 
+}
+
+idx_num <- which(missings_test$Num_missings > 0 & missings_test$class_test == "integer")
+idx_cat <- which(missings_test$Num_missings > 0 & missings_test$class_test == "factor")
+for(k in idx_num){
+  Test[which(is.na(Test[,k])),k] <- mean(Train[,k], na.rm = TRUE) 
+}
+for(k in idx_cat){
+  Test[which(is.na(Test[,k])),k] <- getmode(Train[,k]) 
+}
+
+#Summary de las variables ya sin missings:
+
+summary(Train[,-c(1,75)])
+```
+
+Finalmente quitamos aquellas variables que son constantes en el 90 o más % de los datos:
+
+```{r}
+# Variables categóricas
+idx_cat <- which(missings_train$class_train == "factor")
+
+drop_cat <- c()
+for(k in idx_cat){
+  if(max(summary(Train[,k])/n_train) >= 0.90){
+    drop_cat <- c(drop_cat,k)
+  }
+}
+rownames(missings_train)[drop_cat]
+
+# Variables numéricas
+idx_num <- which(missings_train$class_train == "integer")
+drop_num <- c()
+for(k in idx_num){
+  q<- quantile(Train[,k], probs = c(0.1,0.9))
+  if(q[1] == q[2]){
+    drop_num <- c(drop_num,k)
+  }
+}
+rownames(missings_train)[drop_num]
+
+# Actualizamos tabla de entrenamiento
+missings_train <- missings_train[-c(drop_num,drop_cat),]
+missings_test <- missings_test[-c(drop_num,drop_cat),]
+Train <- Train[,-c(drop_num,drop_cat)]
+y<- length(names(Train))
+Test <- Test[,names(Train)[-y]]
+
+#Dimensión:
+dim(Train)
+
+#Summary:
+summary(Train[,-c(1,55)])
+```
+
+### Cap & Floor (Variables numéricas)
+
+```{r}
+idx_num <- which(missings_train$class_train == "integer")
+idx_num <- idx_num[2:(length(idx_num)-1)]
+Train_cf <- Train
+Test_cf <- Test
+
+cf_idx<- c()
+for(k in idx_num){
+  q<- quantile(Train_cf[,k], probs = c(0.01,0.99))
+  q_menos_train <- which(Train_cf[,k] < q[1])
+  q_mas_train <- which(Train_cf[,k] > q[2])
+  q_menos_test <- which(Test_cf[,k] < q[1])
+  q_mas_test <- which(Test_cf[,k] > q[2])
+  if(length(q_menos_train) > 0){
+    Train_cf[q_menos_train,k] <- q[1]
+    cf_idx<- c(cf_idx,k)
+  }
+  if(length(q_mas_train) > 0){
+    Train_cf[q_mas_train,k] <- q[2]
+    cf_idx<- c(cf_idx,k)
+  }
+  if(length(q_menos_test) > 0){
+    Test_cf[q_menos_test,k] <- q[1]
+  }
+  if(length(q_mas_test) > 0){
+    Test_cf[q_mas_test,k] <- q[2]
+  }
+}
+cf_idx <- unique(cf_idx)
+# Variables con floor / cap
+rownames(missings_train)[cf_idx]
+# Distr antes de cap y floor
+  summary(Test[,cf_idx])
+# Distr después de cap y floor
+  summary(Test_cf[,cf_idx])
+```
+
+### Feature Engineering
+
+```{r}
+
+Y_train = Train_cf$SalePrice
+X_train = Train_cf[,-c(1,55)]
+#Id_train <- Train_cf$Id
+X_test = Test_cf
+Id_test <- X_test$Id
+
+# Variables que podrían ser buenas predictoras (Años transcurridos)
+X_train$Years_S_B = X_train$YrSold - X_train$YearBuilt
+X_train$Years_S_R = X_train$YrSold - X_train$YearRemodAdd
+X_train$Years_S_G = X_train$YrSold - X_train$GarageYrBlt
+X_train$Years_B_R = X_train$YearRemodAdd - X_train$YearBuilt
+X_train$Years_B_G = X_train$GarageYrBlt - X_train$YearBuilt
+X_train$Years_R_G = X_train$YearRemodAdd - X_train$GarageYrBlt
+
+X_test$Years_S_B = X_test$YrSold - X_test$YearBuilt
+X_test$Years_S_R = X_test$YrSold - X_test$YearRemodAdd
+X_test$Years_S_G = X_test$YrSold - X_test$GarageYrBlt
+X_test$Years_B_R = X_test$YearRemodAdd - X_test$YearBuilt
+X_test$Years_B_G = X_test$GarageYrBlt - X_test$YearBuilt
+X_test$Years_R_G = X_test$YearRemodAdd - X_test$GarageYrBlt
+
+# Quitamos las variables de años
+
+years <- c("YrSold","YearBuilt","YearRemodAdd","GarageYrBlt")
+drop_train <- which(names(X_train) %in% years)
+drop_test <- which(names(X_test) %in% years)
+
+X_train <- X_train[,-drop_train]
+X_test <- X_test[,-drop_test]
+
+#Summary variables nuevas
+summary(X_train[,c(50:55)])
+
+# One Hot Encoding de las variables categóricas:
+
+# Quitamos 4 variables categóricas con distinto número de categorías en ambas tablas
+quit<- c(1,10,14,15)
+drop_train<- which(( names(X_train) %in% var))
+X_train <- X_train[,-drop_train]
+var<- c("MSSubClass","HouseStyle","Exterior1st","Exterior2nd")
+drop_test<- which(( names(X_test) %in% var))
+X_test <- X_test[,-drop_test]
+
+#install.packages("mltools")
+library(mltools)
+library(data.table)
+X_train_OHE <- one_hot(dt = as.data.table(X_train))
+X_test_OHE <- one_hot(dt = as.data.table(X_test))
+
+# Finalmente obtenemos 175 variables predictoras:
+
+dim(X_train_OHE)
+
+dim(X_test_OHE)
+```
+### Ajuste de Modelos
+```{r}
+write.csv(as.data.frame(cbind(Y_train,X_train)),'finalTrain.csv')
+write.csv(as.data.frame(cbind(Id_test, X_test)),"finalTest.csv")
+```
+
+#### Configuramos maquina virtual
+
+```{r}
+library(h2o)
+h2o.init(max_mem_size = '8G',nthreads = -1)
+trainh2o<-h2o.importFile('finalTrain.csv')
+target<-"Y_train"
+predictors<-names(trainh2o)[-c(1,2)]
+```
+##### Variable selection
+```{r}
+GBM<-h2o.gbm(x = predictors,y = target,training_frame = trainh2o,nfolds = 5,ntrees = 200,seed = 1,max_depth = 5, learn_rate = 0.1,sample_rate = .7)
+RF<-h2o.randomForest(x = predictors,y = target,training_frame = trainh2o,nfolds = 5,ntrees = 200,seed = 1,max_depth =5,sample_rate = .7 )
+```
+```{r}
+varimpRF<-as.data.frame( h2o.varimp(RF))
+varimpGBM<-as.data.frame( h2o.varimp(GBM))
+predictorsGBM<-varimpGBM$variable[1:20]
+predictorsRF<-varimpRF$variable[1:20]
+
+```
+
+```{r}
+gbm_params<- list(learn_rate = c(0.01, 0.1),
+                    max_depth = c(3, 5, 9),
+                    sample_rate = c(0.8, 1.0),
+                    col_sample_rate = c(0.2, 0.5, 1.0),
+                    ntrees=c(50,60,70,80,90,100)
+                    )
+gbm_grid <- h2o.grid("gbm", x = predictorsGBM, y = target,
+                      grid_id = "gbm_grid",
+                      training_frame = trainh2o,
+                      seed = 1,
+                     min_rows =73,
+                      hyper_params = gbm_params)
+
+```
+
+```{r}
+testh2o<-h2o.importFile('finalTest.csv')
+best_gbm1 <- h2o.getModel(gbm_grid@model_ids[[1]])
+ypred<-h2o.predict(best_gbm1,testh2o)
+```
+```{r}
+prediccion<-data.frame(as.data.frame( testh2o$Id),as.data.frame(ypred))
+names(prediccion)<-c('Id','SalePrice')
+write.csv(prediccion,'prediccion.csv',row.names=FALSE)
+```
+Nuestro primer submit es 
+
+![](images/submit1.png)
+
