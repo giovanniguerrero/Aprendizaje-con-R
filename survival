@@ -1,0 +1,172 @@
+Aquí tienes un código Python estructurado para implementar las metodologías clave mencionadas, utilizando librerías como `lifelines`, `scikit-survival`, y `pycox`. Asumiremos una tabla de entrenamiento con columnas: `features` (covariables), `event` (indicador de evento: 1 si ocurrió, 0 si está censurado), y `time` (tiempo hasta el evento o censura).
+
+---
+
+### **0. Instalación de Librerías**
+```python
+!pip install lifelines scikit-survival pycox pandas numpy matplotlib torch
+```
+
+---
+
+### **1. Métodos Clásicos de Supervivencia**
+#### **1.1 Kaplan-Meier**
+```python
+import pandas as pd
+import numpy as np
+from lifelines import KaplanMeierFitter
+import matplotlib.pyplot as plt
+
+# Datos de ejemplo
+data = pd.DataFrame({
+    'time': [5, 8, 12, 3, 10, 7],  # Meses
+    'event': [1, 0, 1, 1, 0, 1],   # 1: Evento, 0: Censurado
+})
+
+# Estimador Kaplan-Meier
+kmf = KaplanMeierFitter()
+kmf.fit(data['time'], event_observed=data['event'])
+
+# Graficar curva de supervivencia
+kmf.plot_survival_function()
+plt.title("Estimación Kaplan-Meier")
+plt.xlabel("Meses")
+plt.ylabel("Probabilidad de Supervivencia")
+plt.show()
+```
+
+#### **1.2 Cox Proportional Hazards**
+```python
+from lifelines import CoxPHFitter
+
+# Datos con covariables (ejemplo)
+data = pd.DataFrame({
+    'time': [5, 8, 12, 3, 10, 7],
+    'event': [1, 0, 1, 1, 0, 1],
+    'age': [30, 45, 25, 60, 35, 50],
+    'treatment': [1, 0, 1, 0, 1, 0],
+})
+
+# Modelo Cox
+cph = CoxPHFitter()
+cph.fit(data, duration_col='time', event_col='event')
+
+# Resumen del modelo
+print(cph.summary)
+```
+
+---
+
+### **2. Machine Learning (Random Survival Forests)**
+```python
+from sksurv.ensemble import RandomSurvivalForest
+from sksurv.util import Surv
+
+# Preparar datos en formato de sksurv
+y = Surv.from_dataframe("event", "time", data)
+X = data[['age', 'treatment']]
+
+# Entrenar RSF
+rsf = RandomSurvivalForest(n_estimators=100, random_state=42)
+rsf.fit(X, y)
+
+# Predecir riesgo para nuevos datos
+X_new = pd.DataFrame({'age': [40], 'treatment': [1]})
+risk_score = rsf.predict(X_new)
+print(f"Riesgo predicho: {risk_score[0]:.2f}")
+```
+
+---
+
+### **3. Deep Survival Models (DeepSurv)**
+```python
+import torch
+from pycox.models import DeepSurv
+
+# Convertir datos a tensores
+x_train = torch.tensor(data[['age', 'treatment']].values, dtype=torch.float32)
+y_train = torch.tensor(data[['time', 'event']].values, dtype=torch.float32)
+
+# Definir modelo
+in_features = x_train.shape[1]
+model = DeepSurv(in_features=in_features, out_features=1, hidden=[32, 32])
+
+# Entrenamiento (simplificado)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+for epoch in range(100):
+    optimizer.zero_grad()
+    pred = model(x_train)
+    loss = model.loss(pred, y_train)
+    loss.backward()
+    optimizer.step()
+    print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
+```
+
+---
+
+### **4. Corrección de Sesgos (IPW)**
+```python
+from sklearn.linear_model import LogisticRegression
+
+# Calcular pesos IPW para censura no aleatoria
+# Supongamos que la censura depende de la edad
+model_cens = LogisticRegression()
+model_cens.fit(data[['age']], 1 - data['event'])  # Modelar probabilidad de censura
+prob_cens = model_cens.predict_proba(data[['age']])[:, 1]
+weights = 1 / (1 - prob_cens + 1e-6)  # Evitar división por cero
+
+# Aplicar pesos en Cox PH
+cph_ipw = CoxPHFitter()
+cph_ipw.fit(data, duration_col='time', event_col='event', weights=weights)
+```
+
+---
+
+### **5. Bayesian Survival Analysis**
+```python
+from lifelines import WeibullAFTFitter
+
+# Modelo Weibull Bayesiano (usando MCMC aproximado)
+bayesian_model = WeibullAFTFitter()
+bayesian_model.fit(data, duration_col='time', event_col='event')
+
+# Intervalos creíbles (ejemplo)
+print(bayesian_model.summary)
+```
+
+---
+
+### **6. Datos Truncados (Turnbull Estimator)**
+```python
+from lifelines import TurnbullFitter
+
+# Datos censurados por intervalos (ejemplo)
+intervals = np.array([[1, 2], [3, 5], [6, 12], [1, 3], [4, 8], [9, 10]])
+
+# Ajustar modelo de Turnbull
+tb = TurnbullFitter()
+tb.fit(intervals)
+tb.plot()
+plt.show()
+```
+
+---
+
+### **7. Métricas de Validación**
+```python
+from sksurv.metrics import concordance_index_censored
+
+# Calcular C-index
+event_indicator = data['event'].values.astype(bool)
+cindex = concordance_index_censored(event_indicator, data['time'], rsf.predict(X))
+print(f"C-index: {cindex[0]:.3f}")
+```
+
+---
+
+### **Notas Clave:**
+1. **Preprocesamiento:** Asegurar que los datos estén normalizados para modelos de deep learning.
+2. **Hiperparámetros:** Ajustar parámetros como `n_estimators` en RSF o capas en DeepSurv según la complejidad del problema.
+3. **Censura:** Definir claramente la columna `event` (1: evento observado, 0: censurado).
+
+Este código cubre los enfoques más relevantes del estado del arte. Para implementaciones específicas, adapta los datos y parámetros según tu problema.
