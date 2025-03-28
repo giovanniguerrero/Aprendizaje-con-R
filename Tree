@@ -1,0 +1,36 @@
+def tree_to_code(tree, feature_names, tree_index):
+    """
+    Genera código Python para un árbol de decisión.
+    
+    Parámetros:
+    - tree: Árbol de decisión.
+    - feature_names: Nombres de las características.
+    - tree_index: Índice del árbol (para identificarlo).
+    
+    Retorna:
+    - Código Python como una cadena.
+    """
+    from sklearn.tree import _tree
+
+    tree_ = tree.tree_
+    feature_name = [feature_names[i] if i != _tree.TREE_UNDEFINED else "undefined" for i in tree_.feature]
+
+    code = f"def tree_{tree_index}(x):\n"
+    code += "    value = 0.0\n"
+    code += recurse(0, 1, feature_name, tree_.threshold, tree_.children_left, tree_.children_right, tree_.value)
+    code += "    return value\n"
+    return code
+
+def recurse(node, depth, feature_names, thresholds, left, right, value):
+    """
+    Función recursiva para generar las reglas del árbol.
+    """
+    indent = "    " * depth
+    if left[node] == right[node]:  # Es una hoja
+        return f"{indent}value += {value[node].ravel()[0]}\n"
+    # Nodo de decisión
+    code = f"{indent}if x['{feature_names[node]}'] <= {thresholds[node]}:\n"
+    code += recurse(left[node], depth + 1, feature_names, thresholds, left, right, value)
+    code += f"{indent}else:\n"
+    code += recurse(right[node], depth + 1, feature_names, thresholds, left, right, value)
+    return code
