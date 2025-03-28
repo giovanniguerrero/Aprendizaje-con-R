@@ -1,0 +1,28 @@
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+
+# Generar datos de ejemplo
+X, y = make_classification(n_samples=1000, n_features=10, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Entrenar un modelo GBM
+model = GradientBoostingClassifier(n_estimators=100, learning_rate=0.1, random_state=42)
+model.fit(X_train, y_train)
+
+# Función personalizada para predecir probabilidades
+def predict_proba_custom_gbm(X, model):
+    init = model.init_.predict(X)[0]
+    log_odds = init
+    for tree in model.estimators_.ravel():
+        log_odds += model.learning_rate * tree.predict(X)[0]
+    probability = 1 / (1 + np.exp(-log_odds))
+    return probability
+
+# Probar la función
+X_test_sample = X_test[0:1]
+custom_prob = predict_proba_custom_gbm(X_test_sample, model)
+original_prob = model.predict_proba(X_test_sample)[0, 1]
+
+print(f"Probabilidad personalizada: {custom_prob}")
+print(f"Probabilidad original: {original_prob}")
