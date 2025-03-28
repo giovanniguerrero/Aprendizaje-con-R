@@ -1,0 +1,40 @@
+def generate_gbm_code(model, feature_names):
+    """
+    Genera código Python independiente para un modelo GBM.
+    
+    Parámetros:
+    - model: Modelo GBM entrenado.
+    - feature_names: Nombres de las características.
+    
+    Retorna:
+    - Código Python como una cadena.
+    """
+    # Valor inicial
+    init = model.init_.predict([[0]])[0]
+    learning_rate = model.learning_rate
+
+    # Generar código para cada árbol
+    trees_code = ""
+    for i, tree in enumerate(model.estimators_.ravel()):
+        trees_code += tree_to_code(tree, feature_names, i) + "\n"
+
+    # Función principal para predecir
+    main_code = f"""
+def predict_gbm(x):
+    # Valor inicial
+    log_odds = {init}
+    
+    # Sumar las contribuciones de todos los árboles
+"""
+    for i in range(len(model.estimators_)):
+        main_code += f"    log_odds += {learning_rate} * tree_{i}(x)\n"
+
+    # Aplicar la función sigmoide para obtener la probabilidad
+    main_code += """
+    probability = 1 / (1 + np.exp(-log_odds))
+    return probability
+"""
+
+    # Combinar todo el código
+    full_code = trees_code + main_code
+    return full_code
